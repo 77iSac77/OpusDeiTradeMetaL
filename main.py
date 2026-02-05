@@ -239,7 +239,7 @@ class OpusDeiTradeMetaLApp:
 
         self.scheduler.configure(job_defaults=job_defaults)
 
-        self.scheduler.add_job(self.job_collect_prices, "interval", seconds=30)
+        self.scheduler.add_job(self.job_collect_prices, "interval", seconds=90)
         self.scheduler.add_job(self.job_collect_technical, "interval", minutes=5)
         self.scheduler.add_job(self.job_collect_macro, "interval", minutes=30)
         self.scheduler.add_job(self.job_collect_institutional, "interval", hours=1)
