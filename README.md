@@ -76,6 +76,38 @@ Responda a um alerta com:
 /significado [termo] - Explicar termo
 ```
 
+### Todos Comandos
+```
+
+/start
+/status
+/config
+/teste
+/erros
+/comandos
+
+/ativos
+/preco [metal]
+/resumo [metal]
+/cot [metal]
+/etf [metal]
+/digest
+/agenda [dias]
+
+/silenciar [tempo]
+/ativar
+/pausartudo
+/despausar
+/filtrar [metais]
+/filtrar todos
+/timezone [UTC]
+/confluencia [1|2|3]
+
+/buscarmais
+/buscarmais [tema]
+/significado [termo]
+
+
 ## 📦 Deploy
 
 ### Variáveis de Ambiente
