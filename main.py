@@ -1,26 +1,18 @@
-# “””
-OpusDeiTradeMetaL - Main Entry Point
+"""
+OpusDeiTradeMetaL - Main entrypoint
 
-Sistema de alertas em tempo real para metais preciosos e industriais.
-“””
+Runs the Telegram bot plus background collectors using APScheduler.
+All code identifiers are in English for a professional codebase.
+User-facing Telegram messages remain in Portuguese by design.
+"""
 
 import asyncio
 import logging
 import signal
 import sys
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime
 
-# Configurar logging
-
-logging.basicConfig(
-level=logging.INFO,
-format=’%(asctime)s - %(name)s - %(levelname)s - %(message)s’,
-handlers=[
-logging.StreamHandler(sys.stdout),
-]
-)
-logger = logging.getLogger(**name**)
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config.settings import BOT_CONFIG, METAIS
 from storage.database import get_database
@@ -30,90 +22,87 @@ from collectors.technical import get_technical_analyzer
 from collectors.macro import get_macro_collector
 from collectors.institutional import get_institutional_collector
 from processors.alerts import get_alert_processor
-from utils.time_utils import get_next_digest_time
 
-class OpusDeiTradeMetaL:
-“”“Classe principal do sistema.”””
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
 
-```
-def __init__(self):
-    self.db = get_database()
-    self.bot = get_telegram_bot()
-    self.price_collector = get_price_collector()
-    self.technical = get_technical_analyzer()
-    self.macro = get_macro_collector()
-    self.institutional = get_institutional_collector()
-    
-    self.running = False
-    self.tasks = []
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
 
-async def collect_prices_loop(self):
-    """Loop de coleta de preços."""
-    logger.info("Iniciando loop de coleta de preços")
-    
-    while self.running:
+
+class OpusDeiTradeMetaLApp:
+    """Application orchestrator (bot + scheduler jobs)."""
+
+    def __init__(self) -> None:
+        self.db = get_database()
+        self.bot = get_telegram_bot()
+
+        self.price_collector = get_price_collector()
+        self.technical = get_technical_analyzer()
+        self.macro = get_macro_collector()
+        self.institutional = get_institutional_collector()
+
+        # Reuse the same alert processor instance (no re-creation per job).
+        self.alert_processor = get_alert_processor(self.bot.send_message)
+
+        # Scheduler runs in UTC by default (we format multi-timezones inside messages).
+        self.scheduler = AsyncIOScheduler(timezone="UTC")
+
+        self._stopped = asyncio.Event()
+
+    # -------------------------------------------------------------------------
+    # One-shot jobs (used by APScheduler)
+    # -------------------------------------------------------------------------
+
+    async def job_collect_prices(self) -> None:
         try:
-            # Coletar preços
             prices = await self.price_collector.collect_all_prices()
-            logger.debug(f"Coletados {len(prices)} preços")
-            
-            # Verificar alertas de preço
-            processor = get_alert_processor(self.bot.send_message)
-            
-            for metal, price_data in prices.items():
-                # Verificar mudanças em diferentes timeframes
-                for minutes in [15, 60, 1440]:
-                    change = self.price_collector.calculate_change(metal, minutes)
-                    if change:
-                        change_percent, change_value = change
-                        
-                        # Criar alerta se necessário
-                        alert = await processor.process_price_change(
-                            metal=metal,
-                            current_price=price_data.price,
-                            change_percent=change_percent,
-                            change_value=change_value,
-                            timeframe_minutes=minutes,
-                        )
-                        
-                        if alert:
-                            await processor.queue_alert(alert)
-            
-            # Processar fila de alertas
-            await processor.process_queue()
-            
-        except Exception as e:
-            logger.error(f"Erro no loop de preços: {e}")
-            self.db.log_error("main", "price_loop", str(e))
-        
-        # Intervalo de 30 segundos
-        await asyncio.sleep(30)
 
-async def collect_technical_loop(self):
-    """Loop de cálculo de níveis técnicos."""
-    logger.info("Iniciando loop de análise técnica")
-    
-    while self.running:
+            for metal, price_data in prices.items():
+                # 15m / 1h / 1d timeframes (same as your spec)
+                for minutes in (15, 60, 1440):
+                    change = self.price_collector.calculate_change(metal, minutes)
+                    if not change:
+                        continue
+
+                    change_percent, change_value = change
+
+                    alert = await self.alert_processor.process_price_change(
+                        metal=metal,
+                        current_price=price_data.price,
+                        change_percent=change_percent,
+                        change_value=change_value,
+                        timeframe_minutes=minutes,
+                    )
+                    if alert:
+                        await self.alert_processor.queue_alert(alert)
+
+            await self.alert_processor.process_queue()
+
+        except Exception as exc:
+            logger.exception("price job failed: %s", exc)
+            self.db.log_error("main", "job_collect_prices", str(exc))
+
+    async def job_collect_technical(self) -> None:
         try:
-            # Atualizar níveis técnicos para metais principais
-            for metal in ["XAU", "XAG", "XPT", "XCU"]:
+            # Keep it focused on primary metals for frequent updates
+            for metal in ("XAU", "XAG", "XPT", "XCU"):
                 await self.technical.update_levels_for_metal(metal)
-            
-            # Verificar proximidade de níveis
-            processor = get_alert_processor(self.bot.send_message)
-            
+
+            # Proximity checks for all metals (spec)
             for metal in METAIS.keys():
                 price_data = self.price_collector.get_last_price(metal)
                 if not price_data:
                     continue
-                
-                # Verificar proximidade
-                proximity_alerts = self.technical.check_proximity_alerts(
-                    metal, price_data.price
-                )
-                
+
+                proximity_alerts = self.technical.check_proximity_alerts(metal, price_data.price)
                 for prox in proximity_alerts:
-                    alert = await processor.process_technical_proximity(
+                    alert = await self.alert_processor.process_technical_proximity(
                         metal=metal,
                         current_price=price_data.price,
                         level_name=prox["level"].name,
@@ -122,283 +111,250 @@ async def collect_technical_loop(self):
                         distance_percent=prox["distance_percent"],
                     )
                     if alert:
-                        await processor.queue_alert(alert)
-            
-            await processor.process_queue()
-            
-        except Exception as e:
-            logger.error(f"Erro no loop técnico: {e}")
-            self.db.log_error("main", "technical_loop", str(e))
-        
-        # Intervalo de 5 minutos
-        await asyncio.sleep(300)
+                        await self.alert_processor.queue_alert(alert)
 
-async def collect_macro_loop(self):
-    """Loop de coleta de dados macro."""
-    logger.info("Iniciando loop macro")
-    
-    while self.running:
+            await self.alert_processor.process_queue()
+
+        except Exception as exc:
+            logger.exception("technical job failed: %s", exc)
+            self.db.log_error("main", "job_collect_technical", str(exc))
+
+    async def job_collect_macro(self) -> None:
         try:
-            # Coletar dados macro (menos frequente)
             await self.macro.fetch_key_macro_data()
-            
-            # Verificar alertas de calendário
+
             event_alerts = self.macro.check_event_alerts()
-            
-            processor = get_alert_processor(self.bot.send_message)
-            
             for event_alert in event_alerts:
-                alert = await processor.process_calendar_event(
+                alert = await self.alert_processor.process_calendar_event(
                     event_alert["event"].to_dict(),
-                    event_alert["type"]
+                    event_alert["type"],
                 )
                 if alert:
-                    await processor.queue_alert(alert)
-            
-            await processor.process_queue()
-            
-        except Exception as e:
-            logger.error(f"Erro no loop macro: {e}")
-            self.db.log_error("main", "macro_loop", str(e))
-        
-        # Intervalo de 30 minutos
-        await asyncio.sleep(1800)
+                    await self.alert_processor.queue_alert(alert)
 
-async def collect_institutional_loop(self):
-    """Loop de coleta de dados institucionais."""
-    logger.info("Iniciando loop institucional")
-    
-    while self.running:
+            await self.alert_processor.process_queue()
+
+        except Exception as exc:
+            logger.exception("macro job failed: %s", exc)
+            self.db.log_error("main", "job_collect_macro", str(exc))
+
+    async def job_collect_institutional(self) -> None:
         try:
-            # COT (atualiza sexta-feira)
-            if datetime.utcnow().weekday() == 4:  # Sexta
+            # COT is published weekly; this keeps a best-effort update on Fridays (UTC)
+            if datetime.utcnow().weekday() == 4:
                 await self.institutional.fetch_cot_report()
-            
-            # ETF flows diariamente
+
             await self.institutional.fetch_all_etf_data()
-            
-            # On-chain
+
             movements = await self.institutional.fetch_all_onchain_movements()
             whale_alerts = self.institutional.check_whale_alerts(movements)
-            
-            processor = get_alert_processor(self.bot.send_message)
-            
             for movement in whale_alerts:
-                alert = await processor.process_whale_movement(movement.to_dict())
+                alert = await self.alert_processor.process_whale_movement(movement.to_dict())
                 if alert:
-                    await processor.queue_alert(alert)
-            
-            # COT alerts
+                    await self.alert_processor.queue_alert(alert)
+
             cot_alerts = self.institutional.check_cot_alerts()
             for cot_alert in cot_alerts:
                 cot = self.institutional.get_cot_for_metal(cot_alert["metal"])
-                if cot:
-                    alert = await processor.process_cot_update(
-                        cot_alert["metal"],
-                        cot.to_dict()
-                    )
-                    if alert:
-                        await processor.queue_alert(alert)
-            
-            await processor.process_queue()
-            
-        except Exception as e:
-            logger.error(f"Erro no loop institucional: {e}")
-            self.db.log_error("main", "institutional_loop", str(e))
-        
-        # Intervalo de 1 hora
-        await asyncio.sleep(3600)
+                if not cot:
+                    continue
+                alert = await self.alert_processor.process_cot_update(
+                    cot_alert["metal"],
+                    cot.to_dict(),
+                )
+                if alert:
+                    await self.alert_processor.queue_alert(alert)
 
-async def digest_loop(self):
-    """Loop de geração de digests."""
-    logger.info("Iniciando loop de digests")
-    
-    while self.running:
+            await self.alert_processor.process_queue()
+
+        except Exception as exc:
+            logger.exception("institutional job failed: %s", exc)
+            self.db.log_error("main", "job_collect_institutional", str(exc))
+
+    async def job_digest_asia(self) -> None:
         try:
-            now = datetime.utcnow()
-            
-            # Digest Ásia (07:30 UTC)
-            if now.hour == 7 and 30 <= now.minute < 35:
-                if not self.db.get_config(f"digest_asia_{now.date()}", False):
-                    await self._send_digest("asia")
-                    self.db.set_config(f"digest_asia_{now.date()}", True)
-            
-            # Digest EU/US (21:30 UTC)
-            if now.hour == 21 and 30 <= now.minute < 35:
-                if not self.db.get_config(f"digest_euus_{now.date()}", False):
-                    await self._send_digest("eu_us")
-                    self.db.set_config(f"digest_euus_{now.date()}", True)
-            
-            # Digest Semanal (Sábado 20:00 UTC)
-            if now.weekday() == 5 and now.hour == 20 and now.minute < 5:
-                week = now.isocalendar()[1]
-                if not self.db.get_config(f"digest_weekly_{now.year}_{week}", False):
-                    await self._send_digest("weekly")
-                    self.db.set_config(f"digest_weekly_{now.year}_{week}", True)
-            
-        except Exception as e:
-            logger.error(f"Erro no loop de digest: {e}")
-            self.db.log_error("main", "digest_loop", str(e))
-        
-        # Verificar a cada 5 minutos
-        await asyncio.sleep(300)
+            await self._send_digest("asia")
+        except Exception as exc:
+            logger.exception("digest asia failed: %s", exc)
+            self.db.log_error("main", "job_digest_asia", str(exc))
 
-async def _send_digest(self, period: str):
-    """Envia digest."""
-    from bot.formatter import MessageFormatter
-    formatter = MessageFormatter()
-    
-    prices = await self.price_collector.collect_all_prices()
-    prices_dict = {}
-    for code, price_data in prices.items():
-        prices_dict[code] = {
-            "price": price_data.price,
-            "change": price_data.change_percent,
-        }
-    
-    highlights = []
-    sorted_by_change = sorted(
-        prices.items(),
-        key=lambda x: abs(x[1].change_percent),
-        reverse=True
-    )
-    for code, data in sorted_by_change[:3]:
-        direction = "📈" if data.change_percent > 0 else "📉"
-        from config.settings import formato_metal
-        highlights.append(f"{direction} {formato_metal(code)}: {data.change_percent:+.2f}%")
-    
-    if period == "asia":
-        msg = formatter.format_digest_asia(prices_dict, highlights)
-    elif period == "eu_us":
-        msg = formatter.format_digest_eu_us(prices_dict, highlights)
-    else:
-        msg = formatter.format_digest_weekly({"performance": prices_dict})
-    
-    await self.bot.send_message(msg)
-
-async def keepalive_loop(self):
-    """Loop de keep-alive para evitar sleep."""
-    logger.info("Iniciando loop de keep-alive")
-    
-    while self.running:
+    async def job_digest_eu_us(self) -> None:
         try:
-            # Self-ping interno
+            await self._send_digest("eu_us")
+        except Exception as exc:
+            logger.exception("digest eu/us failed: %s", exc)
+            self.db.log_error("main", "job_digest_eu_us", str(exc))
+
+    async def job_digest_weekly(self) -> None:
+        try:
+            await self._send_digest("weekly")
+        except Exception as exc:
+            logger.exception("digest weekly failed: %s", exc)
+            self.db.log_error("main", "job_digest_weekly", str(exc))
+
+    async def job_keepalive(self) -> None:
+        try:
             self.db.increment_counter("keepalive")
-            logger.debug("Keep-alive ping")
-            
-        except Exception as e:
-            logger.error(f"Erro no keep-alive: {e}")
-        
-        # Ping a cada 4 minutos
-        await asyncio.sleep(240)
+        except Exception as exc:
+            logger.exception("keepalive job failed: %s", exc)
+            self.db.log_error("main", "job_keepalive", str(exc))
 
-async def cleanup_loop(self):
-    """Loop de limpeza de dados antigos."""
-    logger.info("Iniciando loop de cleanup")
-    
-    while self.running:
+    async def job_cleanup(self) -> None:
         try:
-            # Limpar alertas antigos (7 dias)
             self.db.cleanup_old_alerts(7)
-            
-            # Limpar cache LLM expirado
             self.db.clear_expired_cache()
-            
-            # Compactar banco
             self.db.vacuum()
-            
-            logger.info("Cleanup concluído")
-            
-        except Exception as e:
-            logger.error(f"Erro no cleanup: {e}")
-        
-        # Cleanup diário
-        await asyncio.sleep(86400)
+            logger.info("cleanup completed")
+        except Exception as exc:
+            logger.exception("cleanup job failed: %s", exc)
+            self.db.log_error("main", "job_cleanup", str(exc))
 
-async def start(self):
-    """Inicia o sistema."""
-    logger.info("=" * 50)
-    logger.info("OpusDeiTradeMetaL iniciando...")
-    logger.info("=" * 50)
-    
-    self.running = True
-    
-    try:
-        # Iniciar bot Telegram
+    # -------------------------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------------------------
+
+    async def _send_digest(self, period: str) -> None:
+        from bot.formatter import MessageFormatter
+        from config.settings import formato_metal
+
+        formatter = MessageFormatter()
+
+        prices = await self.price_collector.collect_all_prices()
+        prices_dict = {
+            code: {"price": data.price, "change": data.change_percent}
+            for code, data in prices.items()
+        }
+
+        highlights = []
+        sorted_by_change = sorted(
+            prices.items(),
+            key=lambda x: abs(x[1].change_percent),
+            reverse=True,
+        )
+        for code, data in sorted_by_change[:3]:
+            direction = "📈" if data.change_percent > 0 else "📉"
+            highlights.append(f"{direction} {formato_metal(code)}: {data.change_percent:+.2f}%")
+
+        if period == "asia":
+            msg = formatter.format_digest_asia(prices_dict, highlights)
+        elif period == "eu_us":
+            msg = formatter.format_digest_eu_us(prices_dict, highlights)
+        else:
+            msg = formatter.format_digest_weekly({"performance": prices_dict})
+
+        await self.bot.send_message(msg)
+
+    # -------------------------------------------------------------------------
+    # Lifecycle
+    # -------------------------------------------------------------------------
+
+    def _configure_scheduler(self) -> None:
+        # Global defaults: avoid overlap and collapse bursts after downtime.
+        job_defaults = {
+            "coalesce": True,
+            "max_instances": 1,
+            "misfire_grace_time": 30,
+        }
+        self.scheduler.configure(job_defaults=job_defaults)
+
+        # High-frequency price job
+        self.scheduler.add_job(self.job_collect_prices, "interval", seconds=30, id="prices")
+
+        # Technical analysis (5 min)
+        self.scheduler.add_job(self.job_collect_technical, "interval", minutes=5, id="technical")
+
+        # Macro (30 min)
+        self.scheduler.add_job(self.job_collect_macro, "interval", minutes=30, id="macro")
+
+        # Institutional (1 hour)
+        self.scheduler.add_job(self.job_collect_institutional, "interval", hours=1, id="institutional")
+
+        # Digests based on market closes (UTC)
+        # Asia close: ~07:30 UTC
+        self.scheduler.add_job(self.job_digest_asia, "cron", hour=7, minute=30, id="digest_asia")
+
+        # COMEX close: ~21:30 UTC
+        self.scheduler.add_job(self.job_digest_eu_us, "cron", hour=21, minute=30, id="digest_eu_us")
+
+        # Weekly digest: Saturday night São Paulo (~20:00 local) -> 23:00 UTC
+        self.scheduler.add_job(self.job_digest_weekly, "cron", day_of_week="sat", hour=23, minute=0, id="digest_weekly")
+
+        # Keepalive (anti-sleep) – from config
+        self.scheduler.add_job(
+            self.job_keepalive,
+            "interval",
+            seconds=int(BOT_CONFIG.get("ping_interval_seconds", 240)),
+            id="keepalive",
+        )
+
+        # Cleanup daily at 03:20 UTC (quiet window)
+        self.scheduler.add_job(self.job_cleanup, "cron", hour=3, minute=20, id="cleanup")
+
+    async def start(self) -> None:
+        logger.info("starting OpusDeiTradeMetaL...")
+
         await self.bot.start()
-        
-        # Enviar mensagem de início
+
+        # Optional startup message (PT is fine; user-facing)
         await self.bot.send_message("🤖 OpusDeiTradeMetaL iniciado e monitorando!")
-        
-        # Coleta inicial
-        logger.info("Realizando coleta inicial de dados...")
-        await self.price_collector.collect_all_prices()
-        await self.technical.update_all_levels()
-        
-        # Iniciar loops de monitoramento
-        self.tasks = [
-            asyncio.create_task(self.collect_prices_loop()),
-            asyncio.create_task(self.collect_technical_loop()),
-            asyncio.create_task(self.collect_macro_loop()),
-            asyncio.create_task(self.collect_institutional_loop()),
-            asyncio.create_task(self.digest_loop()),
-            asyncio.create_task(self.keepalive_loop()),
-            asyncio.create_task(self.cleanup_loop()),
-        ]
-        
-        logger.info("Todos os loops iniciados")
-        
-        # Aguardar indefinidamente
-        await asyncio.gather(*self.tasks)
-        
-    except asyncio.CancelledError:
-        logger.info("Recebido sinal de cancelamento")
-    except Exception as e:
-        logger.error(f"Erro fatal: {e}")
-        raise
+
+        # Warmup (best-effort)
+        try:
+            await self.price_collector.collect_all_prices()
+            await self.technical.update_all_levels()
+        except Exception as exc:
+            logger.warning("warmup failed (continuing): %s", exc)
+
+        self._configure_scheduler()
+        self.scheduler.start()
+        logger.info("scheduler started with %d jobs", len(self.scheduler.get_jobs()))
+
+        await self._stopped.wait()
+
+    async def stop(self) -> None:
+        if self._stopped.is_set():
+            return
+
+        logger.info("stopping OpusDeiTradeMetaL...")
+        self._stopped.set()
+
+        try:
+            if self.scheduler.running:
+                self.scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+
+        try:
+            await self.bot.stop()
+        except Exception:
+            pass
+
+        logger.info("stopped")
+
+
+def _install_signal_handlers(app: OpusDeiTradeMetaLApp) -> None:
+    def _handler(signum, _frame) -> None:
+        logger.info("signal received: %s", signum)
+        # We cannot await here; schedule stop safely.
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(app.stop())
+        except RuntimeError:
+            pass
+
+    signal.signal(signal.SIGINT, _handler)
+    signal.signal(signal.SIGTERM, _handler)
+
+
+async def main() -> None:
+    app = OpusDeiTradeMetaLApp()
+    _install_signal_handlers(app)
+
+    try:
+        await app.start()
     finally:
-        await self.stop()
+        await app.stop()
 
-async def stop(self):
-    """Para o sistema."""
-    logger.info("Parando OpusDeiTradeMetaL...")
-    
-    self.running = False
-    
-    # Cancelar tasks
-    for task in self.tasks:
-        task.cancel()
-    
-    # Aguardar cancelamento
-    await asyncio.gather(*self.tasks, return_exceptions=True)
-    
-    # Parar bot
-    await self.bot.stop()
-    
-    logger.info("OpusDeiTradeMetaL parado")
-```
 
-def handle_signal(signum, frame):
-“”“Handler de sinais do sistema.”””
-logger.info(f”Recebido sinal {signum}”)
-raise KeyboardInterrupt
-
-async def main():
-“”“Função principal.”””
-# Configurar handlers de sinal
-signal.signal(signal.SIGINT, handle_signal)
-signal.signal(signal.SIGTERM, handle_signal)
-
-```
-app = OpusDeiTradeMetaL()
-
-try:
-    await app.start()
-except KeyboardInterrupt:
-    logger.info("Interrupção pelo usuário")
-finally:
-    await app.stop()
-```
-
-if **name** == “**main**”:
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
