@@ -145,7 +145,8 @@ class LLMClient:
     async def generate(self, prompt: str,
                        system_prompt: Optional[str] = None,
                        use_cache: bool = True,
-                       task_type: str = "geral") -> Optional[str]:
+                       task_type: str = "geral",
+                       max_tokens: int = 1000) -> Optional[str]:
         """
         Gera resposta usando pool de modelos com fallback.
 
@@ -209,7 +210,7 @@ class LLMClient:
                 display_name = self._model_name_by_id.get(model_id, model_id)
                 logger.info(f"Tentando modelo: {display_name}")
 
-                response = await self._call_model(model_id, messages)
+                response = await self._call_model(model_id, messages, max_tokens=max_tokens)
                 if response:
                     self.db.increment_counter("llm_calls")
 
@@ -255,7 +256,7 @@ class LLMClient:
             model = self.models[model_index]
 
             logger.info(f"Tentando modelo: {model.name}")
-            response = await self._call_model(model.model_id, messages)
+            response = await self._call_model(model.model_id, messages, max_tokens=max_tokens)
 
             if response:
                 # Incrementar contador
@@ -398,26 +399,34 @@ Formato:
         Returns:
             Texto do digest
         """
-        system_prompt = """Você é um analista de mercado de metais preciosos.
-Gere um resumo conciso e acionável do período.
-Foque em XAU Ouro e XAG Prata principalmente.
-Responda em português brasileiro."""
+        system_prompt = """Você é um analista de mercado de metais preciosos experiente.
+Responda em português brasileiro.
 
-        prompt = f"""Gere um digest de mercado para o período: {period}
+REGRAS DE FORMATAÇÃO (OBRIGATÓRIO):
+- NÃO use Markdown: nada de ##, **, ```, tabelas, ---, listas numeradas
+- Escreva em texto corrido com parágrafos curtos
+- Use emojis para separar seções: 📈 📉 ⚠️ 🎯 🔍 💡
+- Máximo 1200 caracteres no total
+- Termine SEMPRE com uma frase completa, nunca corte no meio
+- Seja direto como um trader falando com outro trader"""
 
-Eventos relevantes:
-{events}
+        prompt = f"""Analise o mercado de metais agora.
 
-Preços atuais:
-{prices}
+Preços atuais: {prices}
+Destaques: {events}
 
-Inclua:
-1. Principais movimentos
-2. Eventos que causaram impacto
-3. O que observar no próximo período
-4. Níveis técnicos importantes"""
+Estruture assim (texto corrido, sem listas):
 
-        return await self.generate(prompt, system_prompt, task_type="analise")
+📈 MOVIMENTOS: O que subiu, o que caiu e por quanto. Destaque os 3 mais relevantes.
+
+🔍 CONTEXTO: Possíveis drivers (macro, geopolítica, oferta/demanda). Correlações entre os movimentos.
+
+🎯 FICAR DE OLHO: Níveis técnicos chave, eventos próximos, cenários possíveis.
+
+Seja completo mas conciso. Cada seção deve ter 2-3 frases no máximo."""
+
+        return await self.generate(prompt, system_prompt, task_type="analise",
+                                   max_tokens=600)
 
     async def analyze_technical_level(self, metal: str, current_price: float,
                                        level_name: str, level_value: float,
