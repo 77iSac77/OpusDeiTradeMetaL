@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime, timedelta
+from utils.time_utils import utcnow
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -64,7 +65,7 @@ class AlertProcessor:
         
         # Controle de rate limit
         self.alerts_sent_this_hour = 0
-        self.hour_start = datetime.utcnow()
+        self.hour_start = utcnow()
         
         # Configurações do usuário
         self.user_config = self._load_user_config()
@@ -81,7 +82,7 @@ class AlertProcessor:
     def _generate_hash(self, content: str) -> str:
         """Gera hash único para conteúdo de alerta."""
         # Incluir hora para permitir alertas similares em horários diferentes
-        hour_key = datetime.utcnow().strftime("%Y%m%d%H")
+        hour_key = utcnow().strftime("%Y%m%d%H")
         return hashlib.md5(f"{content}:{hour_key}".encode()).hexdigest()
     
     def _is_silenced(self) -> bool:
@@ -93,10 +94,10 @@ class AlertProcessor:
         if silenciado_ate:
             try:
                 until = datetime.fromisoformat(silenciado_ate)
-                if datetime.utcnow() < until:
+                if utcnow() < until:
                     return True
-            except:
-                pass
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Erro ao parsear silenciado_ate: {e}")
         
         return False
     
@@ -109,7 +110,7 @@ class AlertProcessor:
     
     def _check_rate_limit(self) -> bool:
         """Verifica rate limit de alertas."""
-        now = datetime.utcnow()
+        now = utcnow()
         
         # Resetar contador a cada hora
         if (now - self.hour_start).total_seconds() >= 3600:
@@ -439,7 +440,7 @@ class AlertProcessor:
     
     def silence(self, minutes: int):
         """Silencia alertas por X minutos."""
-        until = datetime.utcnow() + timedelta(minutes=minutes)
+        until = utcnow() + timedelta(minutes=minutes)
         self.update_config("silenciado_ate", until.isoformat())
     
     def unsilence(self):
