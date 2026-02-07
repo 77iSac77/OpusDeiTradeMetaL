@@ -379,11 +379,13 @@ Sinal: {data.get('signal', 'N/A')}
         
         msg += "\n☢️ ESTRATÉGICOS\n"
         for metal in ["UX", "FE"]:
+            emoji = METAIS[metal].emoji if metal in METAIS else "📊"
             if metal in prices:
                 p = prices[metal]
-                emoji = METAIS[metal].emoji if metal in METAIS else "📊"
                 change = format_percent(p.get('change_percent', 0))
                 msg += f"{emoji} {formato_metal(metal)}: {format_price(p['price'])} ({change})\n"
+            else:
+                msg += f"{emoji} {formato_metal(metal)}: sem dados\n"
         
         msg += f"\n{format_timestamp_all_zones()}"
         return msg
