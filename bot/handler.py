@@ -20,7 +20,8 @@ from telegram.ext import (
 
 from config.settings import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, METAIS,
-    BOT_CONFIG, formato_metal, resolve_metal
+    BOT_CONFIG, formato_metal, resolve_metal,
+    FRED_API_KEY, ETHERSCAN_API_KEY
 )
 from storage.database import get_database
 from utils.llm_client import get_llm_client
@@ -153,9 +154,9 @@ Use /comandos para ver opções disponíveis."""
             "connections_ok": True,
             "ram_mb": ram_mb,
             "last_alert": last_alert,
-            "metals_live": True,  # Seria verificado de verdade
-            "fred": bool(self.db.get_config("fred_ok", True)),
-            "etherscan": bool(self.db.get_config("etherscan_ok", True)),
+            "metals_live": self.price_collector.get_all_last_prices().get("XAU") is not None,
+            "fred": bool(FRED_API_KEY),
+            "etherscan": bool(ETHERSCAN_API_KEY),
             "openrouter": llm_stats.get("remaining", 0) > 0,
             "alerts_24h": self.db.get_alerts_count_today(),
             "llm_calls": llm_stats.get("calls_today", 0),
@@ -410,7 +411,7 @@ Use /comandos para ver opções disponíveis."""
         if not self._is_authorized(update.effective_chat.id):
             return
         
-        await update.message.reply_text("📊 Gerando digest...")
+        await update.message.reply_text("📊 Gerando digest com análise...")
         
         prices = await self.price_collector.collect_all_prices()
         
@@ -422,7 +423,6 @@ Use /comandos para ver opções disponíveis."""
             }
         
         highlights = []
-        # Encontrar maiores movimentos
         sorted_by_change = sorted(
             prices.items(),
             key=lambda x: abs(x[1].change_percent),
@@ -433,7 +433,22 @@ Use /comandos para ver opções disponíveis."""
             direction = "📈" if data.change_percent > 0 else "📉"
             highlights.append(f"{direction} {formato_metal(code)}: {data.change_percent:+.2f}%")
         
-        msg = self.formatter.format_digest_eu_us(prices_dict, highlights)
+        # Eventos próximos
+        upcoming_events = self.macro.get_upcoming_events(hours=24)
+        upcoming = [f"{e.title} ({e.country})" for e in upcoming_events[:3]]
+        
+        msg = self.formatter.format_digest_eu_us(prices_dict, highlights, upcoming)
+        
+        # Gerar análise LLM
+        llm_analysis = await self.llm.generate_digest(
+            events=[{"highlight": h} for h in highlights],
+            prices=prices_dict,
+            period="atual",
+        )
+        
+        if llm_analysis:
+            msg += f"\n\n🧠 ANÁLISE\n{llm_analysis}"
+        
         await update.message.reply_text(msg)
     
     async def cmd_agenda(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
