@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timedelta
+from utils.time_utils import utcnow
 from typing import Dict, Optional
 import psutil
 
@@ -19,7 +20,7 @@ from telegram.ext import (
 
 from config.settings import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, METAIS,
-    BOT_CONFIG, formato_metal
+    BOT_CONFIG, formato_metal, resolve_metal
 )
 from storage.database import get_database
 from utils.llm_client import get_llm_client
@@ -51,7 +52,7 @@ class TelegramBot:
         # Bot
         self.app: Optional[Application] = None
         self.bot: Optional[Bot] = None
-        self.start_time = datetime.utcnow()
+        self.start_time = utcnow()
         
         # Chat autorizado
         self.authorized_chat = int(TELEGRAM_CHAT_ID) if TELEGRAM_CHAT_ID else None
@@ -131,7 +132,7 @@ Use /comandos para ver opções disponíveis."""
             return
         
         # Calcular uptime
-        uptime = datetime.utcnow() - self.start_time
+        uptime = utcnow() - self.start_time
         hours = int(uptime.total_seconds() // 3600)
         minutes = int((uptime.total_seconds() % 3600) // 60)
         uptime_str = f"{hours}h {minutes}m"
@@ -268,18 +269,25 @@ Use /comandos para ver opções disponíveis."""
         args = context.args
         if not args:
             await update.message.reply_text(
-                "Uso: /preco [metal]\nExemplo: /preco XAU\n\nMetais: XAU, XAG, XPT, XPD, XCU, XAL, XNI, XPB, XZN, XSN, UX, FE"
+                "Uso: /preco [metal]\n"
+                "Exemplo: /preco XAU ou /preco ouro\n\n"
+                "Metais: XAU, XAG, XPT, XPD, XCU, XAL, XNI, XPB, XZN, XSN, UX, FE\n"
+                "Ou use nomes: ouro, prata, cobre, platina..."
             )
             return
         
-        metal = args[0].upper()
-        if metal not in METAIS:
-            await update.message.reply_text(f"Metal '{metal}' não encontrado.")
+        input_str = " ".join(args)
+        metal = resolve_metal(input_str)
+        if not metal:
+            await update.message.reply_text(
+                f"Metal '{input_str}' não encontrado.\n"
+                "Use código (XAU, XAG) ou nome (ouro, prata, cobre...)."
+            )
             return
         
         price_data = self.price_collector.get_last_price(metal)
         if not price_data:
-            await update.message.reply_text(f"Preço de {metal} não disponível.")
+            await update.message.reply_text(f"Preço de {formato_metal(metal)} não disponível.")
             return
         
         m = METAIS[metal]
@@ -303,11 +311,17 @@ Use /comandos para ver opções disponíveis."""
             return
         
         args = context.args
-        metal = args[0].upper() if args else "XAU"
-        
-        if metal not in METAIS:
-            await update.message.reply_text(f"Metal '{metal}' não encontrado.")
-            return
+        if args:
+            input_str = " ".join(args)
+            metal = resolve_metal(input_str)
+            if not metal:
+                await update.message.reply_text(
+                    f"Metal '{input_str}' não encontrado.\n"
+                    "Use código (XAU, XAG) ou nome (ouro, prata, cobre...)."
+                )
+                return
+        else:
+            metal = "XAU"
         
         await update.message.reply_text(f"📊 Gerando resumo de {formato_metal(metal)}...")
         
@@ -353,7 +367,17 @@ Use /comandos para ver opções disponíveis."""
             return
         
         args = context.args
-        metal = args[0].upper() if args else "XAU"
+        if args:
+            input_str = " ".join(args)
+            metal = resolve_metal(input_str)
+            if not metal:
+                await update.message.reply_text(
+                    f"Metal '{input_str}' não encontrado.\n"
+                    "Use código (XAU, XAG) ou nome (ouro, prata, cobre...)."
+                )
+                return
+        else:
+            metal = "XAU"
         
         cot = self.institutional.get_cot_for_metal(metal)
         if not cot:
@@ -468,7 +492,7 @@ Use /comandos para ver opções disponíveis."""
         processor = get_alert_processor(self.send_message)
         processor.silence(minutes)
         
-        until = datetime.utcnow() + timedelta(minutes=minutes)
+        until = utcnow() + timedelta(minutes=minutes)
         await update.message.reply_text(
             f"🔕 Alertas silenciados por {minutes} minutos.\n"
             f"Volta às {until.strftime('%H:%M')} UTC."
@@ -523,16 +547,29 @@ Use /comandos para ver opções disponíveis."""
             processor.set_filter([])
             await update.message.reply_text("🔔 Alertas de TODOS os metais ativados.")
         else:
-            metals = [m.upper() for m in args if m.upper() in METAIS]
+            metals = []
+            invalid = []
+            for arg in args:
+                resolved = resolve_metal(arg)
+                if resolved:
+                    metals.append(resolved)
+                else:
+                    invalid.append(arg)
+            
             if not metals:
-                await update.message.reply_text("Nenhum metal válido especificado.")
+                await update.message.reply_text(
+                    "Nenhum metal válido especificado.\n"
+                    "Use código (XAU, XAG) ou nome (ouro, prata, cobre...)."
+                )
                 return
             
             processor = get_alert_processor(self.send_message)
             processor.set_filter(metals)
-            await update.message.reply_text(
-                f"🔔 Alertas filtrados para: {', '.join(metals)}"
-            )
+            nomes = [formato_metal(m) for m in metals]
+            msg = f"🔔 Alertas filtrados para: {', '.join(nomes)}"
+            if invalid:
+                msg += f"\n⚠️ Não reconhecidos: {', '.join(invalid)}"
+            await update.message.reply_text(msg)
     
     async def cmd_timezone(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler do comando /timezone [UTC offset]."""
