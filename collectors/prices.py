@@ -22,6 +22,7 @@ import logging
 import re
 import json
 from datetime import datetime, timedelta
+from utils.time_utils import utcnow
 from typing import Dict, Optional, List, Tuple, Any
 from dataclasses import dataclass, field
 from bs4 import BeautifulSoup
@@ -50,7 +51,7 @@ class PriceData:
     ask: Optional[float] = None
     spread: Optional[float] = None
     source: str = ""
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=utcnow)
     reliability: int = 100  # 0-100, quanto maior mais confiável
     
     def __post_init__(self):
@@ -132,7 +133,7 @@ class PriceSource(ABC):
             try:
                 prices = await self.fetch_prices()
                 if prices:
-                    self.last_success = datetime.utcnow()
+                    self.last_success = utcnow()
                     self.consecutive_failures = 0
                     logger.info(f"{self.name}: {len(prices)} preços coletados")
                     return prices
@@ -930,7 +931,7 @@ class PriceCollector:
         merged = self._merge_prices(all_results)
         
         # Atualizar cache e histórico
-        now = datetime.utcnow()
+        now = utcnow()
         for code, price_data in merged.items():
             self.last_prices[code] = price_data
             
@@ -975,7 +976,7 @@ class PriceCollector:
             return None
         
         current_price = history[-1][1]
-        cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+        cutoff = utcnow() - timedelta(minutes=minutes)
         
         # Encontrar preço mais próximo do período
         old_prices = [(ts, p) for ts, p in history if ts <= cutoff]
