@@ -8,6 +8,7 @@ import sqlite3
 import json
 import os
 from datetime import datetime, timedelta
+from utils.time_utils import utcnow
 from typing import Dict, List, Optional, Any
 from contextlib import contextmanager
 import logging
@@ -51,6 +52,10 @@ class Database:
         """Cria tabelas se não existirem."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            
+            # WAL mode para melhor performance com acessos concorrentes
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=5000")
             
             # Configurações do usuário
             cursor.execute("""
@@ -246,7 +251,7 @@ class Database:
             model: Nome do modelo
             ttl_seconds: Tempo de vida em segundos
         """
-        expires_at = datetime.utcnow() + timedelta(seconds=ttl_seconds)
+        expires_at = utcnow() + timedelta(seconds=ttl_seconds)
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -438,7 +443,7 @@ class Database:
         Returns:
             Novo valor
         """
-        today = datetime.utcnow().date().isoformat()
+        today = utcnow().date().isoformat()
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -466,7 +471,7 @@ class Database:
     
     def get_counter(self, key: str) -> int:
         """Obtém valor do contador."""
-        today = datetime.utcnow().date().isoformat()
+        today = utcnow().date().isoformat()
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
