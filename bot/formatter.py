@@ -363,21 +363,25 @@ Sinal: {data.get('signal', 'N/A')}
         
         msg += "🥇 PRECIOSOS\n"
         for metal in ["XAU", "XAG", "XPT", "XPD"]:
+            emoji = METAIS[metal].emoji
             if metal in prices:
                 p = prices[metal]
-                emoji = METAIS[metal].emoji
                 change = format_percent(p.get('change_percent', 0))
                 msg += f"{emoji} {formato_metal(metal)}: {format_price(p['price'])} ({change})\n"
+            else:
+                msg += f"{emoji} {formato_metal(metal)}: sem dados\n"
         
         msg += "\n⚙️ INDUSTRIAIS\n"
         for metal in ["XCU", "XAL", "XNI", "XPB", "XZN", "XSN"]:
+            emoji = METAIS[metal].emoji
             if metal in prices:
                 p = prices[metal]
-                emoji = METAIS[metal].emoji
                 change = format_percent(p.get('change_percent', 0))
                 msg += f"{emoji} {formato_metal(metal)}: {format_price(p['price'])} ({change})\n"
+            else:
+                msg += f"{emoji} {formato_metal(metal)}: sem dados\n"
         
-        msg += "\n☢️ ESTRATÉGICOS\n"
+        msg += "\n🛤️ ESTRATÉGICOS\n"
         for metal in ["UX", "FE"]:
             emoji = METAIS[metal].emoji if metal in METAIS else "📊"
             if metal in prices:
@@ -442,10 +446,10 @@ Sinal: {data.get('signal', 'N/A')}
 📊 Último alerta: {stats.get('last_alert', 'N/A')}
 
 🔌 FONTES
-├─ Metals.live: {'✅' if stats.get('metals_live') else '❌'}
-├─ FRED: {'✅' if stats.get('fred') else '❌'}
-├─ Etherscan: {'✅' if stats.get('etherscan') else '❌'}
-└─ OpenRouter: {'✅' if stats.get('openrouter') else '❌'}
+├─ Metals.live: {'✅' if stats.get('metals_live') else '❌ sem dados'}
+├─ FRED API: {'✅' if stats.get('fred') else '⚠️ sem API key'}
+├─ Etherscan: {'✅' if stats.get('etherscan') else '⚠️ sem API key'}
+└─ OpenRouter: {'✅' if stats.get('openrouter') else '❌ sem quota'}
 
 📈 STATS (24h)
 ├─ Alertas enviados: {stats.get('alerts_24h', 0)}
