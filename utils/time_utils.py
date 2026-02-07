@@ -4,9 +4,14 @@ OpusDeiTradeMetaL - Utilidades de Tempo e Formatação
 Gerencia fusos horários, horário de verão e formatação de timestamps.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 import pytz
+
+
+def utcnow() -> datetime:
+    """Retorna datetime UTC atual (compatível com Python 3.12+)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # =============================================================================
 # FUSOS HORÁRIOS
@@ -33,7 +38,7 @@ def get_timezone_offset(tz_code: str, dt: Optional[datetime] = None) -> int:
         Offset em horas
     """
     if dt is None:
-        dt = datetime.utcnow()
+        dt = utcnow()
     
     tz_info = TIMEZONE_INFO.get(tz_code.upper())
     if not tz_info:
@@ -82,7 +87,7 @@ def format_timestamp_all_zones(utc_dt: Optional[datetime] = None) -> str:
         String formatada com duas linhas
     """
     if utc_dt is None:
-        utc_dt = datetime.utcnow()
+        utc_dt = utcnow()
     
     utc_str = utc_dt.strftime("%H:%M")
     br_str = format_time_for_timezone(utc_dt, "BR")
@@ -118,7 +123,7 @@ def get_market_status(market: str) -> Dict[str, any]:
     """
     from config.settings import MARKET_HOURS
     
-    now_utc = datetime.utcnow()
+    now_utc = utcnow()
     hours = MARKET_HOURS.get(market.upper())
     
     if not hours:
@@ -153,7 +158,7 @@ def time_until_event(event_dt: datetime) -> str:
     Returns:
         String como "em 2 horas", "amanhã", "em 3 dias"
     """
-    now = datetime.utcnow()
+    now = utcnow()
     delta = event_dt - now
     
     if delta.total_seconds() < 0:
@@ -191,7 +196,7 @@ def is_dst_active(tz_code: str, dt: Optional[datetime] = None) -> bool:
         True se DST ativo
     """
     if dt is None:
-        dt = datetime.utcnow()
+        dt = utcnow()
     
     tz_info = TIMEZONE_INFO.get(tz_code.upper())
     if not tz_info or "tz" not in tz_info:
@@ -216,7 +221,7 @@ def get_next_digest_time(digest_type: str, user_tz_offset: int = -3) -> datetime
     Returns:
         Datetime UTC do próximo digest
     """
-    now = datetime.utcnow()
+    now = utcnow()
     
     if digest_type == "asia":
         # 07:30 UTC (após fechamento Shanghai)
