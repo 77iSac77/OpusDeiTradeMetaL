@@ -53,7 +53,7 @@ METAIS: Dict[str, Metal] = {
     
     # Estratégicos
     "UX": Metal("UX", "Urânio", "estrategico", "☢️", [], ["URA"]),
-    "FE": Metal("FE", "Minério de Ferro", "estrategico", "�ite", [], []),
+    "FE": Metal("FE", "Minério de Ferro", "estrategico", "⚒️", [], []),
 }
 
 def formato_metal(ticker: str) -> str:
@@ -62,6 +62,79 @@ def formato_metal(ticker: str) -> str:
     if metal:
         return f"{metal.ticker} {metal.nome}"
     return ticker
+
+
+# Mapeamento de nomes/aliases → código do metal
+_METAL_ALIASES: Dict[str, str] = {}
+
+def _build_aliases() -> None:
+    """Constrói mapa de aliases na inicialização."""
+    for code, metal in METAIS.items():
+        code_upper = code.upper()
+        # Código direto
+        _METAL_ALIASES[code_upper] = code_upper
+        _METAL_ALIASES[code.lower()] = code_upper
+        # Nome em português (com e sem acento)
+        nome_lower = metal.nome.lower()
+        _METAL_ALIASES[nome_lower] = code_upper
+        # Remover acentos para matching flexível
+        import unicodedata
+        nome_sem_acento = ''.join(
+            c for c in unicodedata.normalize('NFD', nome_lower)
+            if unicodedata.category(c) != 'Mn'
+        )
+        if nome_sem_acento != nome_lower:
+            _METAL_ALIASES[nome_sem_acento] = code_upper
+    
+    # Aliases extras comuns (PT + EN + abreviações)
+    extras = {
+        # Ouro
+        "gold": "XAU", "au": "XAU", "ouro": "XAU",
+        # Prata
+        "silver": "XAG", "ag": "XAG", "prata": "XAG",
+        # Platina
+        "platinum": "XPT", "pt": "XPT", "platina": "XPT",
+        # Paládio
+        "palladium": "XPD", "pd": "XPD", "paladio": "XPD",
+        # Cobre
+        "copper": "XCU", "cu": "XCU", "cobre": "XCU",
+        # Alumínio
+        "aluminum": "XAL", "aluminium": "XAL", "al": "XAL",
+        "aluminio": "XAL",
+        # Níquel
+        "nickel": "XNI", "ni": "XNI", "niquel": "XNI",
+        # Chumbo
+        "lead": "XPB", "pb": "XPB", "chumbo": "XPB",
+        # Zinco
+        "zinc": "XZN", "zn": "XZN", "zinco": "XZN",
+        # Estanho
+        "tin": "XSN", "sn": "XSN", "estanho": "XSN",
+        # Urânio
+        "uranium": "UX", "uranio": "UX", "u": "UX",
+        # Minério de Ferro
+        "iron": "FE", "iron ore": "FE", "ferro": "FE",
+        "minerio de ferro": "FE", "minerio": "FE",
+    }
+    for alias, code in extras.items():
+        _METAL_ALIASES[alias] = code
+
+_build_aliases()
+
+
+def resolve_metal(input_str: str) -> Optional[str]:
+    """
+    Resolve input do usuário para código de metal.
+    
+    Aceita: código (XAU, xag), nome (Prata, ouro), 
+    aliases (gold, silver, ferro), com/sem acentos.
+    
+    Returns:
+        Código do metal (ex: "XAU") ou None se não encontrado.
+    """
+    if not input_str:
+        return None
+    cleaned = input_str.strip().lower()
+    return _METAL_ALIASES.get(cleaned)
 
 # =============================================================================
 # NÍVEIS DE ALERTA
