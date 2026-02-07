@@ -8,6 +8,7 @@ import aiohttp
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from utils.time_utils import utcnow
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from bs4 import BeautifulSoup
@@ -251,7 +252,7 @@ class MacroCollector:
                                 event = EconomicEvent(
                                     event_type=self._categorize_event(title),
                                     title=title,
-                                    event_time=datetime.utcnow(),  # Será ajustado
+                                    event_time=utcnow(),  # Será ajustado
                                     country=country_elem.get_text(strip=True) if country_elem else "",
                                     impact=impact,
                                     actual=actual_elem.get_text(strip=True) if actual_elem else None,
@@ -310,7 +311,7 @@ class MacroCollector:
             datetime(2025, 12, 17, 19, 0),  # Dezembro
         ]
         
-        now = datetime.utcnow()
+        now = utcnow()
         cutoff = now + timedelta(days=days_ahead)
         
         for date in fomc_dates:
@@ -482,7 +483,7 @@ class MacroCollector:
             Lista de alertas a enviar
         """
         alerts = []
-        now = datetime.utcnow()
+        now = utcnow()
         
         for event in self.events_cache:
             time_until = event.event_time - now
@@ -522,7 +523,7 @@ class MacroCollector:
         Returns:
             Lista de eventos
         """
-        now = datetime.utcnow()
+        now = utcnow()
         cutoff = now + timedelta(hours=hours)
         
         return [
